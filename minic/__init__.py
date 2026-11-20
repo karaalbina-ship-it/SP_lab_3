@@ -1,0 +1,2 @@
+class MiniCError(Exception):
+    pass

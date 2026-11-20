@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniC AST</title>
+<style>
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --ink: #1d1d1b;
+  --muted: #6b6b66;
+  --line: #deddd7;
+  --hl: #fff1b8;
+  --hl-strong: #f5c518;
+  --hover: #e3efff;
+  --link: #b9b8b0;
+  --c-decl: #2f6fb5;
+  --c-stmt: #2e8b57;
+  --c-expr: #c46a1a;
+  --c-leaf: #8a5cc2;
+  --err: #c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615;
+    --panel: #1f1f1d;
+    --ink: #ecebe6;
+    --muted: #9b9a93;
+    --line: #34332f;
+    --hl: #4a3f12;
+    --hl-strong: #f5c518;
+    --hover: #1f3550;
+    --link: #55544e;
+    --c-decl: #6aa5e8;
+    --c-stmt: #5cc08a;
+    --c-expr: #e99a52;
+    --c-leaf: #b892ea;
+    --err: #ff7b6b;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.4 system-ui, sans-serif;
+}
+header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+header h1 { font-size: 16px; margin: 0; }
+.legend { display: flex; gap: 12px; color: var(--muted); font-size: 12px; }
+.legend span::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  background: var(--c);
+  vertical-align: -1px;
+}
+main {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(320px, 2.2fr) minmax(300px, 1.3fr);
+  gap: 12px;
+  padding: 12px 16px;
+  height: calc(100vh - 52px);
+}
+section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+section h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.scroll { overflow: auto; flex: 1; min-height: 0; }
+pre { margin: 0; font: 12.5px/1.5 ui-monospace, Consolas, monospace; }
+.row { display: flex; white-space: pre; padding-right: 12px; }
+.row .no { width: 3.2em; flex: none; text-align: right; padding-right: 10px; color: var(--muted); user-select: none; }
+.row.hover { background: var(--hover); }
+.row.cur { background: var(--hl); }
+#tree { flex: 1; min-height: 0; }
+#tree svg { width: 100%; height: 100%; display: block; cursor: grab; }
+.node circle { stroke: var(--panel); stroke-width: 2px; }
+.node.collapsed circle { stroke: var(--ink); stroke-width: 1.5px; }
+.node text { font: 11px ui-monospace, Consolas, monospace; fill: var(--ink); }
+.node text.sub { fill: var(--muted); }
+.node.hover circle { stroke: var(--ink); }
+.node.cur circle { stroke: var(--hl-strong); stroke-width: 4px; }
+.link { fill: none; stroke: var(--link); stroke-width: 1.5px; }
+button {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); align-items: center; }
+.controls label { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+#bytecode { flex: 1.4; }
+.state { flex: 1; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); min-height: 0; }
+.state > div { overflow: auto; padding: 6px 12px; min-height: 0; }
+.state > div + div { border-left: 1px solid var(--line); }
+.state h3 { font-size: 11px; color: var(--muted); margin: 4px 0; font-weight: 600; text-transform: uppercase; }
+#output { border-top: 1px solid var(--line); padding: 6px 12px; height: 7.5em; overflow: auto; flex: none; white-space: pre-wrap; }
+#output .err { color: var(--err); }
+.status { color: var(--muted); font-size: 12px; text-transform: none; letter-spacing: 0; }
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; height: auto; }
+  section { height: 70vh; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">MiniC</h1>
+  <div class="legend">
+    <span style="--c: var(--c-decl)">оголошення</span>
+    <span style="--c: var(--c-stmt)">оператори</span>
+    <span style="--c: var(--c-expr)">вирази</span>
+    <span style="--c: var(--c-leaf)">листки</span>
+  </div>
+</header>
+<main>
+  <section>
+    <h2>Вихідний код</h2>
+    <div class="scroll"><pre id="source"></pre></div>
+  </section>
+  <section>
+    <h2>AST
+      <span>
+        <button id="expand">Розгорнути все</button>
+        <button id="collapse">До функцій</button>
+        <button id="fit">Вписати</button>
+      </span>
+    </h2>
+    <div id="tree"></div>
+  </section>
+  <section>
+    <h2>Байт-код і ВМ <span class="status" id="status"></span></h2>
+    <div class="controls">
+      <button id="step">Крок</button>
+      <button id="play">Відтворити</button>
+      <button id="finish">До кінця</button>
+      <button id="reset">Скинути</button>
+      <label>швидкість <input id="speed" type="range" min="1" max="60" value="12"></label>
+    </div>
+    <div class="scroll" id="bytecode"><pre id="code"></pre></div>
+    <div class="state">
+      <div><h3>Стек</h3><pre id="stack"></pre></div>
+      <div><h3>Кадри</h3><pre id="frames"></pre></div>
+    </div>
+    <pre id="output"></pre>
+  </section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+/*VM*/
+</script>
+<script>
+const DATA = /*DATA*/;
+const prog = DATA.program;
+document.getElementById("title").textContent = "MiniC: " + DATA.name;
+document.title = DATA.name + " — MiniC AST";
+
+const CATEGORY = {
+  Program: "decl", Func: "decl", Params: "decl", Param: "decl", Decl: "decl", Var: "decl", Array: "decl",
+  Block: "stmt", If: "stmt", While: "stmt", DoWhile: "stmt", For: "stmt", Return: "stmt",
+  Break: "stmt", Continue: "stmt", ExprStmt: "stmt", Empty: "stmt",
+  Num: "leaf", Str: "leaf", Name: "leaf",
+};
+const color = (k) => `var(--c-${CATEGORY[k] || "expr"})`;
+
+const srcEl = document.getElementById("source");
+const srcRows = DATA.source.replace(/\n$/, "").split("\n").map((text, i) => {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `<span class="no">${i + 1}</span>`;
+  row.append(text || " ");
+  srcEl.append(row);
+  return row;
+});
+
+const starts = Object.fromEntries(Object.entries(prog.funcs).map(([n, a]) => [a, n]));
+const codeEl = document.getElementById("code");
+const codeRows = prog.code.map((ins, addr) => {
+  if (starts[addr] !== undefined) {
+    const head = document.createElement("div");
+    head.className = "row";
+    head.innerHTML = `<span class="no"></span>${starts[addr]}:`;
+    codeEl.append(head);
+  }
+  const row = document.createElement("div");
+  row.className = "row";
+  let args = [ins.arg, ins.arg2].filter((a) => a !== null).join(" ");
+  if (ins.op === "PUSHS") args += "  " + JSON.stringify(prog.strings[ins.arg]);
+  if (ins.op === "CALL") args += "  <" + Object.keys(prog.funcs).find((n) => prog.funcs[n] === ins.arg) + ">";
+  row.innerHTML = `<span class="no">${addr}</span>`;
+  row.append(ins.op.padEnd(7) + args);
+  row.addEventListener("mouseenter", () => hover(ins.node, ins.line));
+  row.addEventListener("mouseleave", () => hover(null, null));
+  codeEl.append(row);
+  return row;
+});
+
+const root = d3.hierarchy(DATA.ast);
+const allNodes = root.descendants();
+const nodeById = new Map(allNodes.map((d) => [d.data.id, d]));
+allNodes.forEach((d) => {
+  d._children = d.children;
+  if (d.depth >= 4) d.children = null;
+});
+
+const box = document.getElementById("tree");
+const svg = d3.select(box).append("svg");
+const g = svg.append("g");
+const gLinks = g.append("g");
+const gNodes = g.append("g");
+const zoom = d3.zoom().scaleExtent([0.15, 3]).on("zoom", (e) => g.attr("transform", e.transform));
+svg.call(zoom).on("dblclick.zoom", null);
+const layout = d3.tree().nodeSize([96, 64]).separation((a, b) => (a.parent === b.parent ? 1 : 1.25));
+
+function split(label) {
+  const i = label.indexOf(" ");
+  return i < 0 ? [label, ""] : [label.slice(0, i), label.slice(i + 1)];
+}
+
+function short(s) {
+  return s.length > 14 ? s.slice(0, 13) + "…" : s;
+}
+
+function draw() {
+  layout(root);
+  const nodes = root.descendants();
+  const links = root.links();
+  gLinks.selectAll("path").data(links, (d) => d.target.data.id).join("path")
+    .attr("class", "link")
+    .attr("d", d3.linkVertical().x((d) => d.x).y((d) => d.y));
+  const sel = gNodes.selectAll("g.node").data(nodes, (d) => d.data.id).join((enter) => {
+    const n = enter.append("g").attr("class", "node");
+    n.append("circle").attr("r", 7);
+    n.append("text").attr("class", "kind").attr("text-anchor", "middle").attr("dy", -12);
+    n.append("text").attr("class", "sub").attr("text-anchor", "middle").attr("dy", 22);
+    n.append("title");
+    n.on("click", (e, d) => {
+      if (!d._children) return;
+      d.children = d.children ? null : d._children;
+      draw();
+    });
+    n.on("mouseenter", (e, d) => hover(d.data.id, d.data.line));
+    n.on("mouseleave", () => hover(null, null));
+    return n;
+  });
+  sel.attr("transform", (d) => `translate(${d.x},${d.y})`)
+    .classed("collapsed", (d) => d._children && !d.children)
+    .style("cursor", (d) => (d._children ? "pointer" : "default"));
+  sel.select("circle").attr("fill", (d) => color(d.data.kind));
+  sel.select("text.kind").text((d) => split(d.data.label)[0]);
+  sel.select("text.sub").text((d) => short(split(d.data.label)[1]));
+  sel.select("title").text((d) => `${d.data.label}\nрядок ${d.data.line}`);
+  mark();
+}
+
+function fit(animate = true) {
+  const b = g.node().getBBox();
+  const w = box.clientWidth, h = box.clientHeight;
+  if (!w || !h || !b.width) return;
+  const k = Math.min(1.2, 0.92 * Math.min(w / b.width, h / b.height));
+  const t = d3.zoomIdentity.translate(w / 2 - k * (b.x + b.width / 2), h / 2 - k * (b.y + b.height / 2)).scale(k);
+  (animate ? svg.transition().duration(300) : svg).call(zoom.transform, t);
+}
+
+let fitted = false;
+new ResizeObserver(() => {
+  if (!fitted && box.clientWidth) {
+    fitted = true;
+    svg.call(zoom.transform, d3.zoomIdentity.translate(box.clientWidth / 2, 40).scale(0.9));
+  }
+}).observe(box);
+
+document.getElementById("expand").onclick = () => {
+  allNodes.forEach((d) => { d.children = d._children; });
+  draw();
+  fit();
+};
+document.getElementById("collapse").onclick = () => {
+  allNodes.forEach((d) => { d.children = d.depth < 1 ? d._children : null; });
+  draw();
+  fit();
+};
+document.getElementById("fit").onclick = fit;
+
+let hoverNode = null, hoverLine = null;
+function hover(id, line) {
+  hoverNode = id;
+  hoverLine = line;
+  mark();
+}
+
+function mark() {
+  const ins = vm.halted ? null : vm.current();
+  const curNode = ins ? ins.node : null;
+  const curLine = ins ? ins.line : null;
+  srcRows.forEach((r, i) => {
+    r.classList.toggle("cur", i + 1 === curLine);
+    r.classList.toggle("hover", i + 1 === hoverLine);
+  });
+  codeRows.forEach((r, a) => {
+    r.classList.toggle("cur", a === vm.pc && !vm.halted);
+    r.classList.toggle("hover", hoverNode !== null && prog.code[a].node === hoverNode);
+  });
+  const node = curNode === null ? null : nodeById.get(curNode);
+  const shown = node && node.ancestors().reverse().find((a) => !a.children);
+  gNodes.selectAll("g.node")
+    .classed("cur", (d) => shown === d)
+    .classed("hover", (d) => d.data.id === hoverNode);
+}
+
+const show = (v) => (Array.isArray(v) ? "[" + v.join(", ") + "]" : typeof v === "string" ? JSON.stringify(v) : String(v));
+const outEl = document.getElementById("output");
+const vm = new VM(prog, (t) => outEl.append(t));
+let timer = null;
+
+function render(scroll) {
+  document.getElementById("stack").textContent = vm.stack.slice().reverse().map(show).join("\n") || "—";
+  document.getElementById("frames").textContent = vm.frames.slice(1).reverse()
+    .map((f) => `${f.func}  ${f.locals.map(show).join(" ")}`).join("\n")
+    + (vm.globals.length ? `\nglobals  ${vm.globals.map(show).join(" ")}` : "");
+  document.getElementById("status").textContent = vm.halted ? `завершено, ${vm.steps} кроків` : `pc ${vm.pc}, крок ${vm.steps}`;
+  mark();
+  if (scroll && !vm.halted) {
+    codeRows[vm.pc].scrollIntoView({ block: "nearest" });
+    const line = srcRows[vm.current().line - 1];
+    if (line) line.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function guarded(fn) {
+  try {
+    fn();
+  } catch (e) {
+    stop();
+    vm.halted = true;
+    const span = document.createElement("span");
+    span.className = "err";
+    span.textContent = "\n" + e.message;
+    outEl.append(span);
+  }
+  render(true);
+}
+
+function stop() {
+  clearInterval(timer);
+  timer = null;
+  document.getElementById("play").textContent = "Відтворити";
+}
+
+document.getElementById("step").onclick = () => guarded(() => vm.step());
+document.getElementById("finish").onclick = () => { stop(); guarded(() => vm.run(5e7)); };
+document.getElementById("reset").onclick = () => { stop(); vm.reset(); outEl.textContent = ""; render(true); };
+document.getElementById("play").onclick = () => {
+  if (timer) return stop();
+  document.getElementById("play").textContent = "Пауза";
+  timer = setInterval(() => {
+    if (vm.halted) return stop();
+    const n = +document.getElementById("speed").value;
+    guarded(() => { for (let i = 0; i < Math.max(1, n - 10) && !vm.halted; i++) vm.step(); });
+  }, 1000 / Math.min(10, +document.getElementById("speed").value));
+};
+
+draw();
+render(false);
+</script>
+</body>
+</html>
